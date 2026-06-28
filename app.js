@@ -87,7 +87,8 @@ let editTarget = { W: state, S: scores, kind: 'mine' };
 
 // Config remota
 const DEFAULT_SCORING = {r16:1,qf:2,sf:4,fin:6,champ:10,exact:3,diff:1};
-let settings = { locked:false, scoring:{...DEFAULT_SCORING} };
+let settings = { locked:false, late_register_only:false, scoring:{...DEFAULT_SCORING} };
+let officialResults = { winners:{}, scores:{} };
 let adminMode = false;
 
 /* ============================================================
@@ -284,8 +285,12 @@ function renderStage(data, editable){
         el.appendChild(g);
       }
     }
+    const isPlayed = data.kind !== 'official' && c.round !== 'r32' && officialResults.winners && officialResults.winners[c.id] && officialResults.winners[c.id].c;
     if(c.round==='r32'){
       el.classList.add('locked');
+    }else if(isPlayed){
+      el.classList.add('played-locked');
+      el.title = 'Partido ya jugado (bloqueado)';
     }else if(editable){
       el.addEventListener('click', ()=>openMatch(c.id));
     }else{
@@ -494,9 +499,10 @@ function applyName(t){
    ============================================================ */
 async function loadSettings(){
   if(!sb) return;
-  const { data, error } = await sb.from('settings').select('locked,scoring').eq('id',1).single();
+  const { data, error } = await sb.from('settings').select('locked,scoring,late_register_only').eq('id',1).single();
   if(!error && data){
     settings.locked = !!data.locked;
+    settings.late_register_only = !!data.late_register_only;
     settings.scoring = Object.assign({...DEFAULT_SCORING}, data.scoring||{});
   }
 }
@@ -504,7 +510,10 @@ async function submitMyBracket(){
   const name = (document.getElementById('nameInput').value||'').trim();
   const status = document.getElementById('miStatus');
   if(!name){ alert('Escribe tu nombre.'); return; }
-  const missing = ADV_SLOTS.filter(s=>!isMatchDone(state,scores,s));
+  const missing = ADV_SLOTS.filter(s => {
+    const isOfficialDone = officialResults.winners && officialResults.winners[s] && officialResults.winners[s].c;
+    return !isMatchDone(state,scores,s) && !isOfficialDone;
+  });
   if(missing.length){ alert(`Te faltan ${missing.length} partidos por completar (ganador + marcador).`); return; }
   if(!sb){ saveLocal(); status.textContent='Guardado localmente (sin nube configurada).'; return; }
   if(settings.locked){ alert('El torneo está cerrado.'); return; }
@@ -589,10 +598,23 @@ function showMine(){
   editTarget = { W:state, S:scores, kind:'mine' };
   moveStageTo('slot-mi');
   const locked = settings.locked;
-  document.getElementById('btnSave').disabled = locked;
-  document.getElementById('miLocked').hidden = !locked;
-  document.getElementById('miEdit').hidden = locked;
-  renderStage(editTarget, !locked);
+  const lateRegister = settings.late_register_only;
+  const hasLocalSaved = localStorage.getItem(LS_KEY) !== null;
+  const isUserLocked = locked || (lateRegister && hasLocalSaved);
+
+  document.getElementById('btnSave').disabled = isUserLocked;
+  document.getElementById('miLocked').hidden = !isUserLocked;
+  document.getElementById('miEdit').hidden = isUserLocked;
+
+  if (isUserLocked) {
+    if (locked) {
+      document.getElementById('miLocked').innerHTML = '🔒 El torneo está cerrado: tu bracket quedó guardado y ya no se puede editar.';
+    } else {
+      document.getElementById('miLocked').innerHTML = '🔒 El torneo está en modo de registro tardío: tu bracket ya fue guardado y no se puede editar.';
+    }
+  }
+
+  renderStage(editTarget, !isUserLocked);
   applyFit();
 }
 
@@ -698,9 +720,12 @@ async function adminSaveOfficial(){
 async function adminToggleLock(){
   const next = !settings.locked;
   if(next && !confirm('¿Cerrar el torneo? Nadie podrá editar y se revelarán los brackets y la tabla.')) return;
-  const { error } = await sb.from('settings').update({ locked:next, updated_at:new Date().toISOString() }).eq('id',1);
+  const late_register = next ? false : true;
+  const { error } = await sb.from('settings').update({ locked:next, late_register_only:late_register, updated_at:new Date().toISOString() }).eq('id',1);
   if(error){ alert(error.message); return; }
-  settings.locked = next; lockBadge();
+  settings.locked = next;
+  settings.late_register_only = late_register;
+  lockBadge();
   document.getElementById('lockToggle').textContent = settings.locked ? 'Reabrir torneo' : 'Bloquear torneo';
   document.getElementById('adminLockState').textContent = settings.locked ? 'CERRADO' : 'ABIERTO';
 }
@@ -778,6 +803,9 @@ function resetMine(){
    INIT
    ============================================================ */
 function wire(){
+  document.querySelectorAll('#topnav [data-tab]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ location.hash = '#' + btn.dataset.tab; });
+  });
   document.getElementById('btnSave').addEventListener('click', submitMyBracket);
   document.getElementById('btnExport').addEventListener('click', exportPNG);
   document.getElementById('btnReset').addEventListener('click', resetMine);
@@ -802,6 +830,11 @@ async function init(){
   wire();
   loadLocal();
   await loadSettings();
+  try {
+    const off = await fetchOfficial();
+    officialResults.winners = off.winners || {};
+    officialResults.scores = off.scores || {};
+  } catch(e) { console.warn('No se pudieron precargar resultados oficiales:', e); }
   lockBadge();
   if(!location.hash) location.hash = '#mi';
   route();

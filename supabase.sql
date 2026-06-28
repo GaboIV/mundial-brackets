@@ -10,9 +10,11 @@
 create table if not exists public.settings (
   id int primary key default 1 check (id = 1),
   locked boolean not null default false,
+  late_register_only boolean not null default false,
   scoring jsonb not null default '{"r16":1,"qf":2,"sf":4,"fin":6,"champ":10,"exact":3,"diff":1}'::jsonb,
   updated_at timestamptz not null default now()
 );
+alter table if exists public.settings add column if not exists late_register_only boolean not null default false;
 insert into public.settings(id) values (1) on conflict (id) do nothing;
 
 -- official: el "answer key" (resultados reales). Se revela solo al bloquear.
@@ -49,7 +51,7 @@ create policy s_write on public.settings for update to authenticated using (true
 drop policy if exists o_read  on public.official;
 drop policy if exists o_write on public.official;
 create policy o_read  on public.official for select
-  using ( (select locked from public.settings where id = 1) or auth.role() = 'authenticated' );
+  using ( true );
 create policy o_write on public.official for update to authenticated using (true) with check (true);
 
 -- brackets: lectura pública solo al bloquear (admin siempre); borrado solo admin.
@@ -70,15 +72,36 @@ set search_path = public
 as $$
 declare
   v_locked boolean;
+  v_late_register_only boolean;
   v_id uuid;
+  v_exists boolean;
+  v_slot text;
 begin
-  select locked into v_locked from settings where id = 1;
+  select locked, late_register_only into v_locked, v_late_register_only from settings where id = 1;
   if v_locked then
     raise exception 'El torneo está cerrado; ya no se aceptan cambios.';
   end if;
   if coalesce(trim(p_name), '') = '' then
     raise exception 'El nombre es obligatorio.';
   end if;
+
+  -- Verificar si ya existe este token
+  select exists(select 1 from brackets where token = p_token) into v_exists;
+
+  -- Si es modo de registro tardío, no permitir edición de registros existentes
+  if v_late_register_only and v_exists then
+    raise exception 'El torneo está en modo de registro tardío; no se permiten editar pronósticos existentes.';
+  end if;
+
+  -- Eliminar pronósticos de partidos que ya tengan resultado oficial cargado
+  for v_slot in select jsonb_object_keys(coalesce((select picks->'winners' from official where id = 1), '{}'::jsonb)) loop
+    if jsonb_typeof(p_picks->'winners') = 'object' then
+      p_picks = jsonb_set(p_picks, '{winners}', (p_picks->'winners') - v_slot);
+    end if;
+    if jsonb_typeof(p_picks->'scores') = 'object' then
+      p_picks = jsonb_set(p_picks, '{scores}', (p_picks->'scores') - v_slot);
+    end if;
+  end loop;
 
   update brackets
      set name = p_name, picks = p_picks, updated_at = now()
