@@ -1,0 +1,16 @@
+# Copias de seguridad / versiones viejas
+*.bak
+*.bak-*
+*.orig
+index - copia.html
+
+# Imágenes fuente sueltas (el HTML ya las lleva embebidas en base64)
+*.png
+*.webp
+*.jpg
+*.jpeg
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
