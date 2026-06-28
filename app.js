@@ -661,7 +661,6 @@ async function showTabla(){
   const wrap = document.getElementById('tablaWrap');
   if(!sb){ wrap.innerHTML = msg('Configura Supabase para ver la tabla. (Modo local activo).'); return; }
   await loadSettings(); lockBadge();
-  if(!settings.locked){ wrap.innerHTML = msg('La tabla se publica cuando el admin cierre el torneo.'); return; }
   wrap.innerHTML = msg('Cargando…');
   const [official, brackets] = await Promise.all([fetchOfficial(), fetchBrackets()]);
   const rows = brackets.map(b=>{
@@ -684,7 +683,6 @@ async function showBrackets(){
   moveStageTo('slot-mi');   // saca el bracket de aquí antes de reescribir el HTML
   if(!sb){ list.innerHTML = msg('Configura Supabase para ver los brackets del grupo.'); return; }
   await loadSettings(); lockBadge();
-  if(!settings.locked){ list.innerHTML = msg('Los brackets de los demás se revelan cuando el admin cierre el torneo.'); return; }
   list.innerHTML = msg('Cargando…');
   bracketsCache = await fetchBrackets();
   if(!bracketsCache.length){ list.innerHTML = msg('Aún no hay brackets guardados.'); return; }

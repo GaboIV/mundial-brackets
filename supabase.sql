@@ -54,12 +54,12 @@ create policy o_read  on public.official for select
   using ( true );
 create policy o_write on public.official for update to authenticated using (true) with check (true);
 
--- brackets: lectura pública solo al bloquear (admin siempre); borrado solo admin.
--- No hay INSERT/UPDATE directos para anónimos: se hace por la función submit_bracket.
+-- brackets: lectura pública siempre (la tabla y los brackets se ven con el torneo abierto);
+-- borrado solo admin. No hay INSERT/UPDATE directos para anónimos: se hace por submit_bracket.
 drop policy if exists b_read   on public.brackets;
 drop policy if exists b_delete on public.brackets;
 create policy b_read   on public.brackets for select
-  using ( (select locked from public.settings where id = 1) or auth.role() = 'authenticated' );
+  using ( true );
 create policy b_delete on public.brackets for delete to authenticated using (true);
 
 -- ---------- RPC: guardar / editar bracket ----------
