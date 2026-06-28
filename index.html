@@ -947,6 +947,26 @@
       box-shadow: none;
       z-index: 6;
     }
+
+    /* precargado: resultado oficial auto-cargado (no suma puntos) */
+    .chip.precargado {
+      opacity: 1;
+      cursor: not-allowed;
+      box-shadow: inset 0 0 0 1px var(--gold, #e9c46a);
+    }
+
+    .chip .star {
+      position: absolute;
+      top: -7px;
+      left: -5px;
+      color: var(--gold, #e9c46a);
+      font-size: 16px;
+      font-weight: 900;
+      line-height: 1;
+      z-index: 4;
+      pointer-events: none;
+      text-shadow: 0 0 3px #000, 0 0 3px #000;
+    }
   </style>
 </head>
 
@@ -975,6 +995,7 @@
       están fijos.</div>
     <div id="miLocked" class="hint-bar locked-bar" hidden>🔒 El torneo está cerrado: tu bracket quedó guardado y ya no
       se puede editar.</div>
+    <div id="precargaNote" class="hint-bar" hidden></div>
     <div class="stage-slot" id="slot-mi"></div>
   </section>
 

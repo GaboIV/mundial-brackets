@@ -75,6 +75,9 @@ declare
   v_late_register_only boolean;
   v_id uuid;
   v_exists boolean;
+  v_prev jsonb;
+  v_prevW jsonb;
+  v_prevS jsonb;
   v_slot text;
 begin
   select locked, late_register_only into v_locked, v_late_register_only from settings where id = 1;
@@ -85,20 +88,31 @@ begin
     raise exception 'El nombre es obligatorio.';
   end if;
 
-  -- Verificar si ya existe este token
-  select exists(select 1 from brackets where token = p_token) into v_exists;
+  -- Traer el pronóstico previo de este token (si existe)
+  select picks into v_prev from brackets where token = p_token;
+  v_exists := v_prev is not null;
+  v_prevW := coalesce(v_prev->'winners', '{}'::jsonb);
+  v_prevS := coalesce(v_prev->'scores',  '{}'::jsonb);
 
   -- Si es modo de registro tardío, no permitir edición de registros existentes
   if v_late_register_only and v_exists then
     raise exception 'El torneo está en modo de registro tardío; no se permiten editar pronósticos existentes.';
   end if;
 
-  -- Eliminar pronósticos de partidos que ya tengan resultado oficial cargado
+  -- Para cada partido con resultado oficial ya cargado:
+  --   * si el usuario YA lo había pronosticado antes → se conserva ese pronóstico (suma puntos).
+  --   * si NO lo tenía (usuario nuevo o partido sin pronosticar) → se vacía (precargado, no suma puntos).
   for v_slot in select jsonb_object_keys(coalesce((select picks->'winners' from official where id = 1), '{}'::jsonb)) loop
-    if jsonb_typeof(p_picks->'winners') = 'object' then
+    -- winners
+    if v_prevW ? v_slot then
+      p_picks = jsonb_set(p_picks, '{winners}', coalesce(p_picks->'winners','{}'::jsonb) || jsonb_build_object(v_slot, v_prevW->v_slot));
+    elsif jsonb_typeof(p_picks->'winners') = 'object' then
       p_picks = jsonb_set(p_picks, '{winners}', (p_picks->'winners') - v_slot);
     end if;
-    if jsonb_typeof(p_picks->'scores') = 'object' then
+    -- scores
+    if v_prevS ? v_slot then
+      p_picks = jsonb_set(p_picks, '{scores}', coalesce(p_picks->'scores','{}'::jsonb) || jsonb_build_object(v_slot, v_prevS->v_slot));
+    elsif jsonb_typeof(p_picks->'scores') = 'object' then
       p_picks = jsonb_set(p_picks, '{scores}', (p_picks->'scores') - v_slot);
     end if;
   end loop;

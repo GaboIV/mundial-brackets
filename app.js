@@ -76,6 +76,7 @@ const DEFAULTS = {
 // Mi bracket: ganadores (winners) + marcadores (scores). r32 vienen de DEFAULTS.
 const state  = Object.assign({}, DEFAULTS);   // winners por slot
 const scores = {};                            // { slotId:[g0,g1] }
+let precargados = new Set();                   // slots auto-cargados con el oficial (no suman puntos)
 let currentId = null;                          // partido abierto en el modal
 
 // Bracket oficial (admin)
@@ -296,6 +297,14 @@ function renderStage(data, editable){
     }else{
       el.classList.add('readonly');
     }
+    if(data.precargados && data.precargados.has(c.id)){
+      el.classList.add('precargado');
+      el.title = 'Resultado oficial precargado · no suma puntos';
+      const star = document.createElement('span');
+      star.className = 'star';
+      star.textContent = '*';
+      el.appendChild(star);
+    }
     stage.appendChild(el);
   });
   updateProgress(Wm, Sm);
@@ -457,8 +466,8 @@ function clearMatch(){
   closeModal();
 }
 function afterEdit(){
-  renderStage(editTarget, true);
-  if(editTarget.kind==='mine') saveLocal();
+  if(editTarget.kind==='mine'){ renderMine(!settings.locked); saveLocal(); }
+  else renderStage(editTarget, true);
 }
 function closeModal(){ modalBg.classList.remove('open'); currentId=null; penSel=null; }
 
@@ -474,7 +483,7 @@ function myToken(){
 }
 function saveLocal(){
   const name = (document.getElementById('nameInput')||{}).value || '';
-  localStorage.setItem(LS_KEY, JSON.stringify({winners:advOnly(state), scores, name}));
+  localStorage.setItem(LS_KEY, JSON.stringify({winners:advOnly(state), scores, name, precargados:[...precargados]}));
 }
 function loadLocal(){
   try{
@@ -482,8 +491,34 @@ function loadLocal(){
     const obj = JSON.parse(raw);
     Object.assign(state, obj.winners||{});
     Object.assign(scores, obj.scores||{});
+    precargados = new Set(obj.precargados||[]);
     if(obj.name){ const ni=document.getElementById('nameInput'); if(ni){ ni.value=obj.name; applyName(obj.name); } }
   }catch(e){}
+}
+
+// Rellena los partidos ya jugados (con resultado oficial) que el usuario NO pronosticó.
+// Esos slots quedan precargados con el oficial, bloqueados y sin sumar puntos.
+function applyPrecarga(){
+  const ow = officialResults.winners || {}, os = officialResults.scores || {};
+  // quitar precargas cuyo oficial ya no existe (admin lo borró) → editable de nuevo
+  for(const slot of [...precargados]){
+    if(!(ow[slot] && ow[slot].c)){
+      precargados.delete(slot);
+      delete state[slot]; delete scores[slot];
+    }
+  }
+  // añadir/refrescar precargas
+  for(const slot of ADV_SLOTS){
+    if(ow[slot] && ow[slot].c){
+      const mine = state[slot];
+      if(precargados.has(slot) || !(mine && mine.c)){
+        state[slot] = { c:ow[slot].c, n:ow[slot].n };
+        if(Array.isArray(os[slot])) scores[slot] = os[slot].slice();
+        else delete scores[slot];
+        precargados.add(slot);
+      }
+    }
+  }
 }
 // solo slots de avance (sin r32) para enviar/guardar
 function advOnly(Wm){
@@ -594,27 +629,30 @@ function lockBadge(){
 }
 
 /* ---- Pestaña Mi Bracket ---- */
-function showMine(){
-  editTarget = { W:state, S:scores, kind:'mine' };
-  moveStageTo('slot-mi');
-  const locked = settings.locked;
-  const lateRegister = settings.late_register_only;
-  const hasLocalSaved = localStorage.getItem(LS_KEY) !== null;
-  const isUserLocked = locked || (lateRegister && hasLocalSaved);
-
-  document.getElementById('btnSave').disabled = isUserLocked;
-  document.getElementById('miLocked').hidden = !isUserLocked;
-  document.getElementById('miEdit').hidden = isUserLocked;
-
-  if (isUserLocked) {
-    if (locked) {
-      document.getElementById('miLocked').innerHTML = '🔒 El torneo está cerrado: tu bracket quedó guardado y ya no se puede editar.';
-    } else {
-      document.getElementById('miLocked').innerHTML = '🔒 El torneo está en modo de registro tardío: tu bracket ya fue guardado y no se puede editar.';
+function renderMine(editable){
+  applyPrecarga();
+  editTarget = { W:state, S:scores, kind:'mine', precargados };
+  renderStage(editTarget, editable);
+  const note = document.getElementById('precargaNote');
+  if(note){
+    if(precargados.size){
+      note.hidden = false;
+      note.innerHTML = `<b>*</b> ${precargados.size} partido(s) ya se jugaron y vienen <b>precargados</b> con el resultado oficial: no se pueden editar y <b>no te suman puntos</b>.`;
+    }else{
+      note.hidden = true;
     }
   }
-
-  renderStage(editTarget, !isUserLocked);
+}
+function showMine(){
+  moveStageTo('slot-mi');
+  const locked = settings.locked;
+  document.getElementById('btnSave').disabled = locked;
+  document.getElementById('miLocked').hidden = !locked;
+  document.getElementById('miEdit').hidden = locked;
+  if(locked){
+    document.getElementById('miLocked').innerHTML = '🔒 El torneo está cerrado: tu bracket quedó guardado y ya no se puede editar.';
+  }
+  renderMine(!locked);
   applyFit();
 }
 
@@ -720,7 +758,9 @@ async function adminSaveOfficial(){
 async function adminToggleLock(){
   const next = !settings.locked;
   if(next && !confirm('¿Cerrar el torneo? Nadie podrá editar y se revelarán los brackets y la tabla.')) return;
-  const late_register = next ? false : true;
+  // Al reabrir, todos pueden editar los partidos aún no jugados; los ya jugados
+  // quedan precargados y bloqueados por partido (no se usa el bloqueo total).
+  const late_register = false;
   const { error } = await sb.from('settings').update({ locked:next, late_register_only:late_register, updated_at:new Date().toISOString() }).eq('id',1);
   if(error){ alert(error.message); return; }
   settings.locked = next;
@@ -795,8 +835,9 @@ function resetMine(){
   for(const k in state) delete state[k];
   Object.assign(state, DEFAULTS);
   for(const k in scores) delete scores[k];
+  precargados.clear();
   saveLocal();
-  renderStage(editTarget, !settings.locked);
+  renderMine(!settings.locked);
 }
 
 /* ============================================================
