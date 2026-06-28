@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bracket Mundial 2026 — WE ARE 26</title>
+  <title>Quiniela Mundial Mene Grande 2026</title>
   <style>
     :root {
       --bg: #0b0b0c;
@@ -572,10 +572,34 @@
     }
 
     #topnav .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-weight: 800;
       color: var(--gold-2);
       margin-right: 8px;
       letter-spacing: .5px
+    }
+
+    #topnav .brand-logo {
+      height: 34px;
+      width: auto;
+      border-radius: 6px;
+      flex: 0 0 auto;
+    }
+
+    /* En teléfonos: logo + nombre como header completo arriba, botones debajo */
+    @media (max-width: 640px) {
+      #topnav .brand {
+        flex: 1 1 100%;
+        justify-content: center;
+        margin-right: 0;
+        font-size: 15px;
+        text-align: center;
+      }
+      #topnav .brand-logo {
+        height: 40px;
+      }
     }
 
     #topnav [data-tab] {
@@ -973,7 +997,7 @@
 <body>
 
   <div id="topnav">
-    <div class="brand">🏆 Quiniela Mundial</div>
+    <div class="brand"><img src="menegranderos.png" alt="Mene Granderos" class="brand-logo">Quiniela Mundial Mene Grande 2026</div>
     <button data-tab="mi" class="active">Mi Bracket</button>
     <button data-tab="tabla">Tabla de Puntos</button>
     <button data-tab="brackets">Brackets</button>
