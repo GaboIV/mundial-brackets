@@ -9,6 +9,8 @@ index - copia.html
 *.webp
 *.jpg
 *.jpeg
+# Excepción: el logo del header se sirve como archivo, no embebido
+!menegranderos.png
 
 # Sistema / editor
 .DS_Store

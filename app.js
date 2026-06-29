@@ -699,8 +699,19 @@ async function showBrackets(){
 }
 function viewBracket(b){
   moveStageTo('viewerHost');
-  const data = { W:{...DEFAULTS, ...(b.picks?.winners||{})}, S:(b.picks?.scores||{}) };
-  renderStage(data, false);
+  const W = {...DEFAULTS, ...(b.picks?.winners||{})};
+  const S = {...(b.picks?.scores||{})};
+  // rellenar partidos ya jugados que esta persona no pronosticó (precargados con el oficial)
+  const ow = officialResults.winners||{}, os = officialResults.scores||{};
+  const precargados = new Set();
+  for(const slot of ADV_SLOTS){
+    if(ow[slot] && ow[slot].c && !(W[slot] && W[slot].c)){
+      W[slot] = { c:ow[slot].c, n:ow[slot].n };
+      if(Array.isArray(os[slot])) S[slot] = os[slot].slice();
+      precargados.add(slot);
+    }
+  }
+  renderStage({ W, S, precargados }, false);
   applyFit();
 }
 
