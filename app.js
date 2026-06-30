@@ -389,6 +389,7 @@ function renderMatch(slot, f, teams, sc){
     teamRow(f[0], teams[0], 0, sc[0]) + teamRow(f[1], teams[1], 1, sc[1]);
   document.getElementById('btnSaveMatch').style.display = '';
   document.getElementById('btnClear').style.display = '';
+  document.getElementById('adminMatchActions').hidden = !(editTarget && editTarget.kind==='official');
   document.querySelectorAll('#matchBox .goal-in').forEach(inp=>{
     inp.addEventListener('input', refreshPenalty);
   });
@@ -405,6 +406,7 @@ function renderMatchPending(slot, f, Wm){
   document.getElementById('penRow').hidden = true;
   document.getElementById('btnSaveMatch').style.display = 'none';
   document.getElementById('btnClear').style.display = (Wm[slot]?'':'none');
+  document.getElementById('adminMatchActions').hidden = true;
 }
 let matchTeams = null, matchFeeders = null;
 
@@ -850,6 +852,102 @@ function resetMine(){
 }
 
 /* ============================================================
+   ADMIN: textos para WhatsApp (por partido)
+   ============================================================ */
+// "Brasil 2-1 Argentina" (con guion si falta un gol)
+function waScoreLine(t0, t1, sc){
+  const n0 = (t0 && t0.n) ? t0.n : '¿?';
+  const n1 = (t1 && t1.n) ? t1.n : '¿?';
+  const a = (sc && sc[0]!=null) ? sc[0] : '-';
+  const b = (sc && sc[1]!=null) ? sc[1] : '-';
+  return `${n0} ${a}-${b} ${n1}`;
+}
+
+// Acción 1: pronóstico (marcador + ganador) de cada participante para ESTE partido.
+async function sharePredictions(){
+  const slot = currentId;
+  if(!slot) return;
+  const f = feedersOf(slot);
+  if(!f){ alert('Este partido no admite pronósticos.'); return; }
+  const list = await fetchBrackets();
+  let head = `📋 *PRONÓSTICOS · ${roundName(slot).toUpperCase()}*`;
+  const r0 = offW[f[0]], r1 = offW[f[1]];
+  if(r0 && r0.c && r1 && r1.c) head += `\n🆚 ${r0.n} vs ${r1.n}`;
+  const lines = list.map(b=>{
+    const Wm = {...DEFAULTS, ...(b.picks?.winners||{})};
+    const Sm = b.picks?.scores||{};
+    const t0 = Wm[f[0]], t1 = Wm[f[1]];
+    if(!(t0&&t0.c) || !(t1&&t1.c)) return `• ${b.name}: sin pronóstico`;
+    const win = Wm[slot];
+    const winTxt = (win && win.n) ? `  →  🏆 ${win.n}` : '';
+    return `• ${b.name}: ${waScoreLine(t0, t1, Sm[slot])}${winTxt}`;
+  });
+  const body = lines.length ? lines.join('\n') : 'Aún no hay pronósticos guardados.';
+  showShareText('Pronósticos · ' + roundName(slot), head + '\n\n' + body);
+}
+
+// Acción 2: tras el resultado oficial, quiénes sumaron puntos en ESTE partido y por qué.
+async function shareScores(){
+  const slot = currentId;
+  if(!slot) return;
+  const f = feedersOf(slot);
+  if(!f){ alert('Este partido no otorga puntos.'); return; }
+  const OWm = {...DEFAULTS, ...offW};
+  const OSm = offS;
+  if(!(OWm[slot] && OWm[slot].c)){
+    alert('Primero pon (y guarda) el resultado oficial de este partido.');
+    return;
+  }
+  const w = settings.scoring;
+  const list = await fetchBrackets();
+  let head = `🏆 *PUNTOS · ${roundName(slot).toUpperCase()}*`;
+  const r0 = OWm[f[0]], r1 = OWm[f[1]];
+  if(r0 && r1) head += `\n✅ Oficial: ${waScoreLine(r0, r1, OSm[slot])}  →  ${OWm[slot].n}`;
+  const scored = [];
+  list.forEach(b=>{
+    const Wm = {...DEFAULTS, ...(b.picks?.winners||{})};
+    const Sm = b.picks?.scores||{};
+    let pts = 0; const reasons = [];
+    if(Wm[slot] && Wm[slot].c === OWm[slot].c){
+      const p = w[roundOf(slot)]||0; pts += p;
+      reasons.push(`acertó que avanzaba ${OWm[slot].n} (+${p})`);
+    }
+    if(OSm[slot] && Sm[slot]){
+      const lockMatch = teamEq(Wm[f[0]],OWm[f[0]]) && teamEq(Wm[f[1]],OWm[f[1]]);
+      if(lockMatch){
+        const a=Sm[slot][0], bb=Sm[slot][1], A=OSm[slot][0], B=OSm[slot][1];
+        if(a===A && bb===B){ pts += (w.exact||0); reasons.push(`marcador exacto ${A}-${B} (+${w.exact})`); }
+        else if((a-bb)===(A-B)){ pts += (w.diff||0); reasons.push(`acertó la diferencia (+${w.diff})`); }
+      }
+    }
+    if(pts>0) scored.push({ name:b.name, pts, reasons });
+  });
+  scored.sort((x,y)=> y.pts - x.pts);
+  const body = scored.length
+    ? scored.map(s=>`• ${s.name}  *+${s.pts}*\n   ${s.reasons.join(' · ')}`).join('\n')
+    : 'Nadie sumó puntos en este partido. 😬';
+  showShareText('Puntos · ' + roundName(slot), head + '\n\n' + body);
+}
+
+const shareBg = document.getElementById('shareBg');
+function showShareText(title, text){
+  document.getElementById('shareTitle').textContent = title;
+  const ta = document.getElementById('shareText');
+  ta.value = text;
+  shareBg.classList.add('open');
+  setTimeout(()=>{ ta.focus(); ta.select(); }, 30);
+}
+function closeShare(){ shareBg.classList.remove('open'); }
+async function copyShare(){
+  const ta = document.getElementById('shareText');
+  const btn = document.getElementById('shareCopy');
+  try{ await navigator.clipboard.writeText(ta.value); }
+  catch(e){ ta.focus(); ta.select(); try{ document.execCommand('copy'); }catch(_){} }
+  const orig = btn.textContent; btn.textContent = '¡Copiado!';
+  setTimeout(()=>{ btn.textContent = orig; }, 1500);
+}
+
+/* ============================================================
    INIT
    ============================================================ */
 function wire(){
@@ -865,8 +963,13 @@ function wire(){
 
   document.getElementById('btnSaveMatch').addEventListener('click', saveMatch);
   document.getElementById('btnClear').addEventListener('click', clearMatch);
+  document.getElementById('btnPredText').addEventListener('click', sharePredictions);
+  document.getElementById('btnScoreText').addEventListener('click', shareScores);
+  document.getElementById('shareCopy').addEventListener('click', copyShare);
+  document.getElementById('shareClose').addEventListener('click', closeShare);
+  shareBg.addEventListener('click', e=>{ if(e.target===shareBg) closeShare(); });
   modalBg.addEventListener('click', e=>{ if(e.target===modalBg) closeModal(); });
-  document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeShare(); closeModal(); } });
 
   document.getElementById('admSaveOfficial').addEventListener('click', adminSaveOfficial);
   document.getElementById('lockToggle').addEventListener('click', adminToggleLock);

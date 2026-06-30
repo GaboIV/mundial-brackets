@@ -557,6 +557,36 @@
       background: #251313
     }
 
+    .modal .foot.admin-acts {
+      border-top: 1px solid #232329;
+      background: #0e120f
+    }
+
+    .modal .foot button.wa {
+      border-color: #1f5a36;
+      color: #c8f5d8;
+      background: #11271a
+    }
+
+    .modal .foot button.wa:hover {
+      background: #16341f
+    }
+
+    .modal .share-text {
+      width: calc(100% - 32px);
+      margin: 4px 16px 0;
+      min-height: 230px;
+      resize: vertical;
+      border-radius: 9px;
+      border: 1px solid #34343a;
+      background: #0d0d10;
+      color: #e8e8ea;
+      padding: 12px;
+      font: 13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+      white-space: pre;
+      box-sizing: border-box
+    }
+
     /* ============ App: nav + páginas ============ */
     #topnav {
       position: sticky;
@@ -1101,9 +1131,26 @@
       <div class="sub-h" id="modalSub">Pon el marcador y quién avanza</div>
       <div class="match" id="matchBox"></div>
       <div class="pen-row" id="penRow" hidden></div>
+      <div class="foot admin-acts" id="adminMatchActions" hidden>
+        <button class="wa" id="btnPredText">📋 Pronósticos (WhatsApp)</button>
+        <button class="wa" id="btnScoreText">🏆 Puntos (WhatsApp)</button>
+      </div>
       <div class="foot">
         <button class="danger" id="btnClear">Vaciar</button>
         <button class="primary" id="btnSaveMatch">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Overlay: texto para WhatsApp ===== -->
+  <div class="modal-bg" id="shareBg">
+    <div class="modal">
+      <h3 id="shareTitle">Texto para WhatsApp</h3>
+      <div class="sub-h">Cópialo y pégalo en el grupo de predicciones</div>
+      <textarea id="shareText" class="share-text" readonly></textarea>
+      <div class="foot">
+        <button id="shareClose">Cerrar</button>
+        <button class="primary" id="shareCopy">Copiar</button>
       </div>
     </div>
   </div>
