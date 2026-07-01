@@ -670,11 +670,25 @@ async function showTabla(){
     return { name:b.name, ...s };
   }).sort((x,y)=> y.total-x.total || y.hitsExact-x.hitsExact || y.hitsAdv-x.hitsAdv);
   if(!rows.length){ wrap.innerHTML = msg('Aún no hay brackets guardados.'); return; }
+  // dos filas comparten puesto solo si empatan en los tres criterios de orden
+  const tieKey = r => `${r.total}|${r.hitsExact}|${r.hitsAdv}`;
+  rows.forEach((r,i)=>{
+    if(i>0 && tieKey(r)===tieKey(rows[i-1])){
+      r.rank = rows[i-1].rank;      // hereda el puesto del empate
+      r.tiedWithPrev = true;
+    }else{
+      r.rank = i+1;                 // ranking de competición: 1-2-2-4
+    }
+  });
   wrap.innerHTML = `<table class="scoreboard">
     <thead><tr><th>#</th><th>Nombre</th><th>Total</th><th>Avance</th><th>Marcadores</th></tr></thead>
-    <tbody>${rows.map((r,i)=>`<tr class="${i===0?'first':''}">
-      <td>${i+1}</td><td>${escapeHtml(r.name)}</td><td class="pts">${r.total}</td>
-      <td>${r.adv}</td><td>${r.sc} <span class="muted">(${r.hitsExact} exactos)</span></td></tr>`).join('')}</tbody>
+    <tbody>${rows.map((r,i)=>{
+      const span = rows.filter(x=>x.rank===r.rank).length;
+      const rankCell = r.tiedWithPrev ? '' : `<td rowspan="${span}">${r.rank}</td>`;
+      return `<tr class="${i===0?'first':''}${r.tiedWithPrev?' tied':''}">
+      ${rankCell}<td>${escapeHtml(r.name)}</td><td class="pts">${r.total}</td>
+      <td>${r.adv}</td><td>${r.sc} <span class="muted">(${r.hitsExact} exactos)</span></td></tr>`;
+    }).join('')}</tbody>
   </table>`;
 }
 
