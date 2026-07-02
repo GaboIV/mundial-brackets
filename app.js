@@ -88,7 +88,11 @@ let editTarget = { W: state, S: scores, kind: 'mine' };
 
 // Config remota
 const DEFAULT_SCORING = {r16:1,qf:2,sf:4,fin:6,champ:10,exact:3,diff:1};
-let settings = { locked:false, late_register_only:false, scoring:{...DEFAULT_SCORING} };
+// Modo de (re)apertura:
+//   locked     → CERRADO (nadie edita ni registra).
+//   allow_new  → ¿se aceptan nuevos registros? (solo si locked=false)
+//   edit_scope → qué pueden cambiar los YA registrados: 'none' | 'scores' | 'teams'.
+let settings = { locked:false, allow_new:true, edit_scope:'teams', scoring:{...DEFAULT_SCORING} };
 let officialResults = { winners:{}, scores:{} };
 let adminMode = false;
 
@@ -349,6 +353,7 @@ function updateProgress(Wm, Sm){
    ============================================================ */
 const modalBg = document.getElementById('modalBg');
 let penSel = null;   // ganador elegido por penales (fid) cuando hay empate
+let frozenWinner = null;   // en modo 'scores': el clasificado que NO puede cambiar
 
 function openMatch(slot){
   if(!editTarget || slot.includes('-r32-')) return;
@@ -366,6 +371,8 @@ function openMatch(slot){
   currentId = slot;
   const sc = Sm[slot] || [null,null];
   penSel = null;
+  // en modo 'solo marcadores', el clasificado guardado queda fijo (no se puede cambiar)
+  frozenWinner = (editTarget.scope==='scores' && Wm[slot] && Wm[slot].c) ? { c:Wm[slot].c, n:Wm[slot].n } : null;
   // si el ganador guardado era por penales (empate), recuérdalo
   if(sc[0]!=null && sc[0]===sc[1] && Wm[slot] && Wm[slot].c){
     penSel = teamEq(Wm[slot], t0) ? f[0] : (teamEq(Wm[slot], t1) ? f[1] : null);
@@ -419,6 +426,19 @@ function readGoals(){
 function refreshPenalty(){
   const [ga,gb] = readGoals();
   const row = document.getElementById('penRow');
+  // Modo 'solo marcadores': el clasificado no cambia. En empate se pasa por penales
+  // al clasificado fijo (sin opción a elegir).
+  if(editTarget && editTarget.scope==='scores' && frozenWinner){
+    if(ga!=null && gb!=null && ga===gb){
+      penSel = teamEq(frozenWinner, matchTeams[0]) ? matchFeeders[0]
+             : (teamEq(frozenWinner, matchTeams[1]) ? matchFeeders[1] : null);
+      row.hidden = false;
+      row.innerHTML = `<span>Empate ${ga}-${gb}. Pasa <b>${escapeHtml(frozenWinner.n||'')}</b> (fijo en este modo).</span>`;
+    }else{
+      row.hidden = true; row.innerHTML = '';
+    }
+    return;
+  }
   if(ga!=null && gb!=null && ga===gb){
     // empate → hay que elegir quién pasa por penales
     row.hidden = false;
@@ -449,6 +469,11 @@ function saveMatch(){
     winnerFid = penSel;
   }
   const Wm = editTarget.W, Sm = editTarget.S;
+  // Modo 'solo marcadores': invalidar si el marcador cambiaría quién avanza.
+  if(editTarget.scope==='scores' && frozenWinner && !sameTeam(Wm[winnerFid], frozenWinner)){
+    alert(`Ese marcador cambiaría quién avanza; en este modo solo puedes ajustar el marcador manteniendo al mismo clasificado (${frozenWinner.n||''}).`);
+    return;
+  }
   const winnerTeam = Wm[winnerFid];
   const old = Wm[slot];
   Wm[slot] = { c:winnerTeam.c||'', n:winnerTeam.n||'' };
@@ -468,10 +493,10 @@ function clearMatch(){
   closeModal();
 }
 function afterEdit(){
-  if(editTarget.kind==='mine'){ renderMine(!settings.locked); saveLocal(); }
+  if(editTarget.kind==='mine'){ renderMine(); saveLocal(); }
   else renderStage(editTarget, true);
 }
-function closeModal(){ modalBg.classList.remove('open'); currentId=null; penSel=null; }
+function closeModal(){ modalBg.classList.remove('open'); currentId=null; penSel=null; frozenWinner=null; }
 
 /* ============================================================
    PERSISTENCIA LOCAL (mi bracket) + token
@@ -536,12 +561,50 @@ function applyName(t){
    ============================================================ */
 async function loadSettings(){
   if(!sb) return;
-  const { data, error } = await sb.from('settings').select('locked,scoring,late_register_only').eq('id',1).single();
+  const { data, error } = await sb.from('settings').select('locked,scoring,allow_new,edit_scope').eq('id',1).single();
   if(!error && data){
     settings.locked = !!data.locked;
-    settings.late_register_only = !!data.late_register_only;
+    settings.allow_new = data.allow_new !== false;   // default: permitir
+    settings.edit_scope = ['none','scores','teams'].includes(data.edit_scope) ? data.edit_scope : 'teams';
     settings.scoring = Object.assign({...DEFAULT_SCORING}, data.scoring||{});
   }
+}
+
+/* ---- Modo de edición para el participante actual ----
+   Devuelve { mode, canSave, reason }:
+     mode: 'closed' | 'readonly' | 'scores' | 'teams'
+     canSave: si el botón Guardar está habilitado
+     reason: pista para el banner ('locked'|'newclosed'|'existingfrozen'|null) */
+// ¿Este dispositivo (token) ya tiene un bracket guardado en el servidor?
+//   registeredServer: null=desconocido, true/false=verdad del servidor.
+// Se consulta por token; si no hay nube, se usa el flag local 'quiniela26_submitted'.
+let registeredServer = null;
+async function refreshRegistered(){
+  if(!sb){ registeredServer = (localStorage.getItem('quiniela26_submitted')==='1'); return registeredServer; }
+  try{
+    const { data } = await sb.from('brackets').select('id').eq('token', myToken()).maybeSingle();
+    registeredServer = !!data;
+  }catch(e){ registeredServer = null; }
+  return registeredServer;
+}
+function iAmRegistered(){
+  // No basta con tener nombre en localStorage: un usuario NUEVO que está armando su
+  // bracket ya tiene nombre. Solo cuenta como registrado si el servidor tiene su token
+  // (o, en modo local, si ya guardó una vez).
+  if(registeredServer!==null) return registeredServer;
+  return localStorage.getItem('quiniela26_submitted')==='1';
+}
+function myEditState(){
+  if(settings.locked) return { mode:'closed', canSave:false, reason:'locked' };
+  if(!iAmRegistered()){
+    // Participante nuevo: si se aceptan registros, arma su bracket completo.
+    return settings.allow_new
+      ? { mode:'teams', canSave:true, reason:null }
+      : { mode:'closed', canSave:false, reason:'newclosed' };
+  }
+  // Participante ya registrado
+  if(settings.edit_scope==='none') return { mode:'readonly', canSave:false, reason:'existingfrozen' };
+  return { mode:settings.edit_scope, canSave:true, reason:null };   // 'scores' | 'teams'
 }
 async function submitMyBracket(){
   const name = (document.getElementById('nameInput').value||'').trim();
@@ -552,13 +615,14 @@ async function submitMyBracket(){
     return !isMatchDone(state,scores,s) && !isOfficialDone;
   });
   if(missing.length){ alert(`Te faltan ${missing.length} partidos por completar (ganador + marcador).`); return; }
-  if(!sb){ saveLocal(); status.textContent='Guardado localmente (sin nube configurada).'; return; }
+  if(!sb){ saveLocal(); localStorage.setItem('quiniela26_submitted','1'); registeredServer=true; status.textContent='Guardado localmente (sin nube configurada).'; return; }
   if(settings.locked){ alert('El torneo está cerrado.'); return; }
   status.textContent='Guardando…';
   const payload = { winners:advOnly(state), scores };
   const { error } = await sb.rpc('submit_bracket', { p_token:myToken(), p_name:name, p_picks:payload });
   if(error){ status.textContent='Error: '+error.message; return; }
   saveLocal();
+  localStorage.setItem('quiniela26_submitted','1'); registeredServer=true;
   status.textContent='¡Guardado! Puedes editar mientras el torneo siga abierto.';
 }
 async function fetchBrackets(){
@@ -631,9 +695,11 @@ function lockBadge(){
 }
 
 /* ---- Pestaña Mi Bracket ---- */
-function renderMine(editable){
+function renderMine(){
   applyPrecarga();
-  editTarget = { W:state, S:scores, kind:'mine', precargados };
+  const st = myEditState();
+  const editable = (st.mode==='scores' || st.mode==='teams');
+  editTarget = { W:state, S:scores, kind:'mine', precargados, scope: editable ? st.mode : null };
   renderStage(editTarget, editable);
   const note = document.getElementById('precargaNote');
   if(note){
@@ -645,16 +711,28 @@ function renderMine(editable){
     }
   }
 }
+function mineLockedText(reason){
+  if(reason==='newclosed')     return '🔒 Los registros están cerrados; por ahora el torneo no admite nuevos participantes.';
+  if(reason==='existingfrozen')return '🔒 El torneo se reabrió solo para <b>nuevos registros</b>; tu bracket quedó fijo y no se puede editar.';
+  return '🔒 El torneo está cerrado: tu bracket quedó guardado y ya no se puede editar.';
+}
 function showMine(){
   moveStageTo('slot-mi');
-  const locked = settings.locked;
-  document.getElementById('btnSave').disabled = locked;
-  document.getElementById('miLocked').hidden = !locked;
-  document.getElementById('miEdit').hidden = locked;
-  if(locked){
-    document.getElementById('miLocked').innerHTML = '🔒 El torneo está cerrado: tu bracket quedó guardado y ya no se puede editar.';
+  const st = myEditState();
+  const editable = (st.mode==='scores' || st.mode==='teams');
+  document.getElementById('btnSave').disabled = !st.canSave;
+  const miEdit = document.getElementById('miEdit');
+  const miLocked = document.getElementById('miLocked');
+  miEdit.hidden = !editable;
+  miLocked.hidden = editable;
+  if(editable){
+    miEdit.innerHTML = (st.mode==='scores')
+      ? 'Reapertura: solo puedes <b>ajustar el marcador</b>. No puedes cambiar <b>quién avanza</b>. Los partidos ya jugados quedan fijos.'
+      : 'Toca cada partido para poner el <b>marcador</b> y <b>quién avanza</b>. Los 16vos están fijos.';
+  }else{
+    miLocked.innerHTML = mineLockedText(st.reason);
   }
-  renderMine(!locked);
+  renderMine();
   applyFit();
 }
 
@@ -752,8 +830,7 @@ async function renderAdmin(){
   editTarget = { W:offW, S:offS, kind:'official' };
   moveStageTo('slot-admin');
   renderStage(editTarget, true);
-  document.getElementById('lockToggle').textContent = settings.locked ? 'Reabrir torneo' : 'Bloquear torneo';
-  document.getElementById('adminLockState').textContent = settings.locked ? 'CERRADO' : 'ABIERTO';
+  refreshAdminModeUI();
   await renderEntries();
   applyFit();
 }
@@ -780,20 +857,60 @@ async function adminSaveOfficial(){
   const { error } = await sb.from('official').update({ picks:payload, updated_at:new Date().toISOString() }).eq('id',1);
   st.textContent = error ? ('Error: '+error.message) : 'Resultados oficiales guardados.';
 }
+/* ---- Modo de (re)apertura: nombre + resumen legible ---- */
+function modeName(s){
+  if(s.locked) return 'Cerrado';
+  if(s.edit_scope==='teams')  return s.allow_new ? 'Reapertura total' : 'Solo cambios de equipos (sin nuevos)';
+  if(s.edit_scope==='scores') return s.allow_new ? 'Marcadores + nuevos registros' : 'Solo marcadores';
+  return s.allow_new ? 'Solo nuevos registros' : 'Congelado (nadie edita ni registra)';
+}
+function modeSummary(s){
+  if(s.locked) return '🔒 <b>CERRADO</b> — nadie edita ni se registra.';
+  const nu = s.allow_new ? 'Nuevos registros: <b>permitidos</b>.' : 'Nuevos registros: <b>bloqueados</b>.';
+  const sc = {
+    none:  'Los ya registrados <b>no pueden editar</b>.',
+    scores:'Los ya registrados solo ajustan <b>marcadores</b> (no cambian quién avanza).',
+    teams: 'Los ya registrados pueden cambiar <b>equipos</b> en partidos no jugados.'
+  }[s.edit_scope] || '';
+  return `<b>${escapeHtml(modeName(s))}.</b> ${nu} ${sc} Los partidos ya jugados quedan fijos.`;
+}
+function refreshAdminModeUI(){
+  const locked = settings.locked;
+  const lt = document.getElementById('lockToggle');
+  if(lt) lt.textContent = locked ? 'Reabrir torneo' : 'Cerrar torneo';
+  const ls = document.getElementById('adminLockState');
+  if(ls) ls.textContent = locked ? 'CERRADO' : 'ABIERTO';
+  const an = document.getElementById('admAllowNew');
+  if(an){ an.value = settings.allow_new ? '1' : '0'; an.disabled = locked; }
+  const es = document.getElementById('admEditScope');
+  if(es){ es.value = settings.edit_scope; es.disabled = locked; }
+  const sum = document.getElementById('admModeSummary');
+  if(sum) sum.innerHTML = modeSummary(settings);
+}
+
+// Escribe {locked, allow_new, edit_scope} en settings (aplica el patch recibido).
+async function adminApplySettings(patch){
+  Object.assign(settings, patch);
+  const st = document.getElementById('adminStatus');
+  if(st) st.textContent = 'Guardando modo…';
+  const { error } = await sb.from('settings').update({
+    locked: settings.locked,
+    allow_new: settings.allow_new,
+    edit_scope: settings.edit_scope,
+    updated_at: new Date().toISOString()
+  }).eq('id', 1);
+  if(error){ if(st) st.textContent = 'Error: ' + error.message; alert(error.message); return; }
+  if(st) st.textContent = 'Modo actualizado: ' + modeName(settings) + '.';
+  lockBadge();
+  refreshAdminModeUI();
+}
 async function adminToggleLock(){
   const next = !settings.locked;
-  if(next && !confirm('¿Cerrar el torneo? Nadie podrá editar y se revelarán los brackets y la tabla.')) return;
-  // Al reabrir, todos pueden editar los partidos aún no jugados; los ya jugados
-  // quedan precargados y bloqueados por partido (no se usa el bloqueo total).
-  const late_register = false;
-  const { error } = await sb.from('settings').update({ locked:next, late_register_only:late_register, updated_at:new Date().toISOString() }).eq('id',1);
-  if(error){ alert(error.message); return; }
-  settings.locked = next;
-  settings.late_register_only = late_register;
-  lockBadge();
-  document.getElementById('lockToggle').textContent = settings.locked ? 'Reabrir torneo' : 'Bloquear torneo';
-  document.getElementById('adminLockState').textContent = settings.locked ? 'CERRADO' : 'ABIERTO';
+  if(next && !confirm('¿Cerrar el torneo? Nadie podrá editar ni registrarse.')) return;
+  await adminApplySettings({ locked: next });
 }
+function adminSetAllowNew(v){ adminApplySettings({ allow_new: v }); }
+function adminSetEditScope(v){ adminApplySettings({ edit_scope: v }); }
 async function renderEntries(){
   const box=document.getElementById('adminEntries');
   const list = await fetchBrackets();
@@ -862,7 +979,7 @@ function resetMine(){
   for(const k in scores) delete scores[k];
   precargados.clear();
   saveLocal();
-  renderMine(!settings.locked);
+  renderMine();
 }
 
 /* ============================================================
@@ -987,6 +1104,10 @@ function wire(){
 
   document.getElementById('admSaveOfficial').addEventListener('click', adminSaveOfficial);
   document.getElementById('lockToggle').addEventListener('click', adminToggleLock);
+  const admAllowNew = document.getElementById('admAllowNew');
+  if(admAllowNew) admAllowNew.addEventListener('change', e=> adminSetAllowNew(e.target.value==='1'));
+  const admEditScope = document.getElementById('admEditScope');
+  if(admEditScope) admEditScope.addEventListener('change', e=> adminSetEditScope(e.target.value));
   document.getElementById('admLogout').addEventListener('click', adminLogout);
 }
 
@@ -997,6 +1118,7 @@ async function init(){
   wire();
   loadLocal();
   await loadSettings();
+  await refreshRegistered();
   try {
     const off = await fetchOfficial();
     officialResults.winners = off.winners || {};

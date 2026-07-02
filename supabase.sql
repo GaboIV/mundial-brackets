@@ -7,14 +7,28 @@
 -- ---------- TABLAS ----------
 
 -- settings: fila única (id=1). Lectura pública; solo admin escribe.
+--   locked      : master. true = CERRADO (nadie edita ni registra).
+--   allow_new   : ¿se aceptan nuevos registros? (solo aplica con locked=false)
+--   edit_scope  : qué pueden cambiar los YA registrados:
+--                 'none'   = nada (congelados)
+--                 'scores' = solo marcadores, sin cambiar quién avanza
+--                 'teams'  = equipos + marcadores (partidos jugados quedan fijos)
+--   late_register_only : DEPRECADO (se conserva por compatibilidad; ya no se usa).
 create table if not exists public.settings (
   id int primary key default 1 check (id = 1),
   locked boolean not null default false,
   late_register_only boolean not null default false,
+  allow_new boolean not null default true,
+  edit_scope text not null default 'teams' check (edit_scope in ('none','scores','teams')),
   scoring jsonb not null default '{"r16":1,"qf":2,"sf":4,"fin":6,"champ":10,"exact":3,"diff":1}'::jsonb,
   updated_at timestamptz not null default now()
 );
 alter table if exists public.settings add column if not exists late_register_only boolean not null default false;
+alter table if exists public.settings add column if not exists allow_new boolean not null default true;
+alter table if exists public.settings add column if not exists edit_scope text not null default 'teams';
+do $$ begin
+  alter table public.settings add constraint settings_edit_scope_chk check (edit_scope in ('none','scores','teams'));
+exception when duplicate_object then null; end $$;
 insert into public.settings(id) values (1) on conflict (id) do nothing;
 
 -- official: el "answer key" (resultados reales). Se revela solo al bloquear.
@@ -72,7 +86,8 @@ set search_path = public
 as $$
 declare
   v_locked boolean;
-  v_late_register_only boolean;
+  v_allow_new boolean;
+  v_edit_scope text;
   v_id uuid;
   v_exists boolean;
   v_prev jsonb;
@@ -80,7 +95,9 @@ declare
   v_prevS jsonb;
   v_slot text;
 begin
-  select locked, late_register_only into v_locked, v_late_register_only from settings where id = 1;
+  select locked, allow_new, edit_scope
+    into v_locked, v_allow_new, v_edit_scope
+    from settings where id = 1;
   if v_locked then
     raise exception 'El torneo está cerrado; ya no se aceptan cambios.';
   end if;
@@ -94,14 +111,11 @@ begin
   v_prevW := coalesce(v_prev->'winners', '{}'::jsonb);
   v_prevS := coalesce(v_prev->'scores',  '{}'::jsonb);
 
-  -- Si es modo de registro tardío, no permitir edición de registros existentes
-  if v_late_register_only and v_exists then
-    raise exception 'El torneo está en modo de registro tardío; no se permiten editar pronósticos existentes.';
-  end if;
-
   -- Para cada partido con resultado oficial ya cargado:
   --   * si el usuario YA lo había pronosticado antes → se conserva ese pronóstico (suma puntos).
   --   * si NO lo tenía (usuario nuevo o partido sin pronosticar) → se vacía (precargado, no suma puntos).
+  -- Se corre ANTES del gating para normalizar los slots oficiales; así el chequeo de
+  -- 'scores' (winners inalterados) no da falsos rechazos si el admin cargó un resultado nuevo.
   for v_slot in select jsonb_object_keys(coalesce((select picks->'winners' from official where id = 1), '{}'::jsonb)) loop
     -- winners
     if v_prevW ? v_slot then
@@ -116,6 +130,25 @@ begin
       p_picks = jsonb_set(p_picks, '{scores}', (p_picks->'scores') - v_slot);
     end if;
   end loop;
+
+  -- ---- GATING según el modo de reapertura ----
+  if not v_exists then
+    -- Registro nuevo (token no visto antes)
+    if not v_allow_new then
+      raise exception 'En este momento no se aceptan nuevos registros.';
+    end if;
+  else
+    -- Edición de un pronóstico ya guardado
+    if v_edit_scope = 'none' then
+      raise exception 'En este momento no se permiten cambios a pronósticos ya guardados.';
+    elsif v_edit_scope = 'scores' then
+      -- Solo marcadores: quién avanza debe quedar idéntico a lo previo.
+      if coalesce(p_picks->'winners','{}'::jsonb) is distinct from v_prevW then
+        raise exception 'En este modo solo puedes cambiar marcadores, no quién avanza.';
+      end if;
+    end if;
+    -- v_edit_scope = 'teams' → sin restricción extra (partidos jugados ya quedaron fijos arriba)
+  end if;
 
   update brackets
      set name = p_name, picks = p_picks, updated_at = now()
